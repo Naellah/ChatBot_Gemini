@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mon Chatbot IA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-width: 600px;
+            height: 80vh;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .chat-header {
+            background-color: #4f46e5;
+            color: white;
+            padding: 16px;
+            text-align: center;
+            font-size: 1.25rem;
+            font-weight: 600;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: #f9fafb;
+            scroll-behavior: smooth;
+        }
+        .message {
+            display: flex;
+            margin-bottom: 15px;
+        }
+        .message.user {
+            justify-content: flex-end;
+        }
+        .message.bot {
+            justify-content: flex-start;
+        }
+        .message-bubble {
+            max-width: 75%;
+            padding: 12px 18px;
+            border-radius: 20px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+        .message.user .message-bubble {
+            background-color: #4f46e5;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .message.bot .message-bubble {
+            background-color: #e5e7eb;
+            color: #374151;
+            border-bottom-left-radius: 4px;
+        }
+        .chat-input-area {
+            display: flex;
+            padding: 15px;
+            border-top: 1px solid #e5e7eb;
+            background-color: #ffffff;
+        }
+        .chat-input {
+            flex-grow: 1;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 25px;
+            outline: none;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+        .chat-input:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+        }
+        .send-button {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        .send-button:hover {
+            background-color: #4338ca;
+        }
+        .send-button:active {
+            transform: translateY(1px);
+        }
+        .loading-indicator {
+            text-align: center;
+            padding: 10px;
+            color: #6b7280;
+            font-style: italic;
+        }
+        .error-message {
+            color: #ef4444;
+            text-align: center;
+            padding: 10px;
+        }
+        .user-id-display {
+            font-size: 0.8rem;
+            color: #ffffff;
+            background-color: rgba(0, 0, 0, 0.2);
+            padding: 4px 8px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            Chatbot Gemini
+            <span id="userIdDisplay" class="user-id-display"></span>
+        </div>
+        <div id="chatMessages" class="chat-messages">
+            </div>
+        <div class="chat-input-area">
+            <input type="text" id="chatInput" class="chat-input" placeholder="Écrivez votre message...">
+            <button id="sendButton" class="send-button">Envoyer</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const chatMessagesDiv = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendButton = document.getElementById('sendButton');
+
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        function displayMessage(sender, text, className = '') {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', sender);
+
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.classList.add('message-bubble');
+            if (className) {
+                bubbleDiv.classList.add(className);
+            }
+            bubbleDiv.textContent = text;
+            messageDiv.appendChild(bubbleDiv);
+            chatMessagesDiv.appendChild(messageDiv);
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+        }
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    console.log("Utilisateur authentifié :", userId);
+                    document.getElementById('userIdDisplay').textContent = `ID: ${userId}`;
+                    isAuthReady = true;
+                    setupMessageListener();
+                    displayMessage('bot', 'Bonjour, comment puis-je vous aider ?');
+                } else {
+                    try {
+                        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Erreur d'authentification Firebase :", error);
+                        displayMessage('bot', `Erreur lors de l'authentification : ${error.message}`, 'error-message');
+                    }
+                }
+            });
+        } else {
+            console.error("Configuration Firebase non disponible. L'historique du chat ne sera pas persisté.");
+            displayMessage('bot', 'Bonjour, comment puis-je vous aider ?');
+            isAuthReady = true;
+        }
+
+        function setupMessageListener() {
+            if (!isAuthReady || !db || !userId) {
+                console.log("Firebase non prêt ou userId non défini. Impossible de configurer l'écouteur de messages.");
+                return;
+            }
+
+            const chatCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/messages`);
+            const q = query(chatCollectionRef, orderBy('timestamp'));
+
+            onSnapshot(q, (snapshot) => {
+                chatMessagesDiv.innerHTML = '';
+                snapshot.forEach((doc) => {
+                    const messageData = doc.data();
+                    displayMessage(messageData.sender, messageData.text);
+                });
+            }, (error) => {
+                console.error("Erreur lors de l'écoute des messages :", error);
+                displayMessage('bot', `Erreur de chargement de l'historique du chat : ${error.message}`, 'error-message');
+            });
+        }
+
+        async function sendMessageToBackend(prompt) {
+            displayMessage('user', prompt);
+            chatInput.value = '';
+
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'loadingIndicator';
+            loadingDiv.classList.add('loading-indicator');
+            loadingDiv.textContent = 'Gemini est en train d\'écrire...';
+            chatMessagesDiv.appendChild(loadingDiv);
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+            try {
+                let chatHistory = [];
+                if (isAuthReady && db && userId) {
+                    const chatCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/messages`);
+                    const q = query(chatCollectionRef, orderBy('timestamp'));
+                    const snapshot = await getDocs(q);
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        chatHistory.push({ role: data.sender === 'user' ? 'user' : 'model', parts: [{ text: data.text }] });
+                    });
+                }
+
+                const response = await fetch('http://127.0.0.1:5000/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: prompt,
+                        history: chatHistory,
+                        userId: userId
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Erreur du backend : ${response.status} ${response.statusText} - ${errorData.error || 'Erreur inconnue'}`);
+                }
+
+                const data = await response.json();
+                const botResponse = data.response;
+
+                if (loadingDiv) {
+                    loadingDiv.remove();
+                }
+
+                displayMessage('bot', botResponse);
+
+                if (isAuthReady && db && userId) {
+                    const chatCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/messages`);
+                    await addDoc(chatCollectionRef, {
+                        sender: 'user',
+                        text: prompt,
+                        timestamp: serverTimestamp()
+                    });
+                    await addDoc(chatCollectionRef, {
+                        sender: 'bot',
+                        text: botResponse,
+                        timestamp: serverTimestamp()
+                    });
+                }
+
+            } catch (error) {
+                console.error("Erreur lors de l'appel au backend :", error);
+                if (loadingDiv) {
+                    loadingDiv.remove();
+                }
+                displayMessage('bot', `Erreur : ${error.message}. Veuillez vérifier que le backend Python est en cours d'exécution et que le frontend est servi par un serveur web.`, 'error-message');
+            }
+        }
+
+        sendButton.addEventListener('click', () => {
+            const message = chatInput.value.trim();
+            if (message) {
+                sendMessageToBackend(message);
+            }
+        });
+
+        chatInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                const message = chatInput.value.trim();
+                if (message) {
+                    sendMessageToBackend(message);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
